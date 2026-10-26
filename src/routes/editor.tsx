@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { getUpload, type Upload } from "@/lib/upload-store";
-import { recognizeNote, summarizeNote, type Recognition, type StudyPack } from "@/lib/recognize.functions";
+import { recognizeNote, summarizeNote, quizNote, type Recognition, type StudyPack, type QuizQuestion } from "@/lib/recognize.functions";
 
 export const Route = createFileRoute("/editor")({
   head: () => ({
@@ -18,6 +18,12 @@ export const Route = createFileRoute("/editor")({
   component: Editor,
 });
 
+type PageStyle = "classic" | "modern" | "academic";
+const PDF_STYLES: Record<PageStyle, { font: "times" | "helvetica"; size: number; lineHeight: number; margin: number; title: boolean; titleColor?: [number, number, number]; pageNumbers: boolean }> = {
+  classic: { font: "times", size: 12, lineHeight: 1.5, margin: 72, title: false, pageNumbers: false },
+  modern: { font: "helvetica", size: 11, lineHeight: 1.6, margin: 60, title: true, titleColor: [37, 99, 235], pageNumbers: false },
+  academic: { font: "times", size: 12, lineHeight: 2, margin: 72, title: true, pageNumbers: true },
+};
 type Cross = { marker: string; guess: string | null; status: "pending" | "kept" | "removed" };
 type Sugg = { original: string; suggestion: string; status: "pending" | "accepted" | "rejected" };
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -34,6 +40,18 @@ function Editor() {
   const [tab, setTab] = useState<"edit" | "preview" | "study">("edit");
   const summarize = useServerFn(summarizeNote);
   const [study, setStudy] = useState<{ state: "idle" | "loading" | "error" | "done"; error?: string; pack?: StudyPack; forText?: string }>({ state: "idle" });
+  const makeQuiz = useServerFn(quizNote);
+  const [quiz, setQuiz] = useState<{ state: "idle" | "loading" | "error" | "done"; error?: string; qs?: QuizQuestion[]; picks: (number | null)[]; checked: boolean }>({ state: "idle", picks: [], checked: false });
+  const startQuiz = async () => {
+    setQuiz({ state: "loading", picks: [], checked: false });
+    try {
+      const r = await makeQuiz({ data: { text } });
+      setQuiz(r.ok ? { state: "done", qs: r.result, picks: r.result.map(() => null), checked: false } : { state: "error", error: r.error, picks: [], checked: false });
+    } catch {
+      setQuiz({ state: "error", error: "We couldn't reach the quiz helper. Check your connection and try again.", picks: [], checked: false });
+    }
+  };
+  const [style, setStyle] = useState<PageStyle>("classic");
   const makeSummary = async () => {
     setStudy({ state: "loading" });
     try {
@@ -98,12 +116,25 @@ function Editor() {
   const downloadPdf = async () => {
     const { jsPDF } = await import("jspdf");
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-    doc.setFont("times", "normal"); doc.setFontSize(12);
-    const lines = doc.splitTextToSize(text, 595 - 144);
-    let y = 72;
+    const cfg = PDF_STYLES[style];
+    const margin = cfg.margin;
+    let y = margin;
+    if (cfg.title) {
+      doc.setFont(cfg.font, "bold"); doc.setFontSize(cfg.size + 6);
+      if (cfg.titleColor) doc.setTextColor(...cfg.titleColor);
+      doc.text(baseName, style === "academic" ? 297.5 : margin, y, { align: style === "academic" ? "center" : "left" });
+      doc.setTextColor(20, 20, 30);
+      y += cfg.size * 3;
+    }
+    doc.setFont(cfg.font, "normal"); doc.setFontSize(cfg.size);
+    const lines = doc.splitTextToSize(text, 595 - margin * 2);
     for (const l of lines) {
-      if (y > 842 - 72) { doc.addPage(); y = 72; }
-      doc.text(l, 72, y); y += 18;
+      if (y > 842 - margin) { doc.addPage(); y = margin; }
+      doc.text(l, margin, y); y += cfg.size * cfg.lineHeight;
+    }
+    if (cfg.pageNumbers) {
+      const n = doc.getNumberOfPages();
+      for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(10); doc.text(`${i} / ${n}`, 297.5, 842 - 30, { align: "center" }); }
     }
     save(doc.output("blob"), `${baseName}.pdf`);
   };
@@ -205,12 +236,67 @@ function Editor() {
                       )}
                     </div>
                   )}
+
+                  <div className="mt-8 border-t border-border pt-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-display text-xl text-deep">Quiz</h3>
+                        <p className="text-sm text-muted-foreground">Multiple-choice questions from your notes.</p>
+                      </div>
+                      <button onClick={startQuiz} disabled={quiz.state === "loading" || !text.trim()}
+                        className="rounded-2xl bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-soft hover:bg-deep disabled:opacity-50">
+                        {quiz.state === "loading" ? "Making quiz…" : quiz.state === "done" ? "New quiz" : "Make a quiz"}
+                      </button>
+                    </div>
+                    {quiz.state === "loading" && <div className="mt-6 flex justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-soft border-t-primary" /></div>}
+                    {quiz.state === "error" && <p role="alert" className="mt-5 rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{quiz.error}</p>}
+                    {quiz.state === "done" && quiz.qs && (
+                      <div className="mt-5 space-y-4">
+                        {quiz.qs.map((q, qi) => (
+                          <fieldset key={qi} className="rounded-2xl bg-card p-5 shadow-soft">
+                            <legend className="sr-only">Question {qi + 1}</legend>
+                            <p className="mb-3 font-medium text-deep">{qi + 1}. {q.question}</p>
+                            <div className="grid gap-2">
+                              {q.options.map((o, oi) => {
+                                const picked = quiz.picks[qi] === oi;
+                                const right = quiz.checked && oi === q.answerIndex;
+                                const wrong = quiz.checked && picked && oi !== q.answerIndex;
+                                return (
+                                  <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-2.5 text-sm transition ${right ? "border-success bg-success/10" : wrong ? "border-destructive bg-destructive/10" : picked ? "border-primary bg-soft" : "border-border hover:bg-soft"}`}>
+                                    <input type="radio" name={`q${qi}`} checked={picked} disabled={quiz.checked}
+                                      onChange={() => setQuiz((z) => ({ ...z, picks: z.picks.map((p, j) => (j === qi ? oi : p)) }))} className="accent-primary" />
+                                    <span>{o}</span>
+                                    {right && <span className="ml-auto font-medium text-success">Correct answer</span>}
+                                    {wrong && <span className="ml-auto font-medium text-destructive">Your answer</span>}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {quiz.checked && q.explanation && <p className="mt-3 text-sm text-muted-foreground">{q.explanation}</p>}
+                          </fieldset>
+                        ))}
+                        {quiz.checked ? (
+                          <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-soft p-5">
+                            <p className="font-display text-xl text-deep">
+                              Score: {quiz.picks.filter((p, i) => p === quiz.qs![i]!.answerIndex).length} / {quiz.qs.length}
+                            </p>
+                            <button onClick={() => setQuiz((z) => ({ ...z, picks: z.picks.map(() => null), checked: false }))} className="ml-auto rounded-xl bg-card px-4 py-2 font-medium text-deep">Try again</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setQuiz((z) => ({ ...z, checked: true }))} disabled={quiz.picks.some((p) => p === null)}
+                            className="rounded-2xl bg-primary px-5 py-3 font-semibold text-primary-foreground shadow-soft disabled:opacity-50">
+                            {quiz.picks.some((p) => p === null) ? "Answer every question to check" : "Check answers"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : tab === "edit" ? (
                 <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Recognized text"
                   className="min-h-[45vh] w-full resize-y rounded-2xl border border-border bg-page p-4 leading-relaxed text-foreground outline-none focus:border-primary" />
               ) : (
-                <article className="min-h-[45vh] whitespace-pre-wrap rounded-2xl border border-border bg-card px-6 py-8 font-serif text-lg leading-8 text-foreground sm:px-10">
+                <article className={`page-${style} min-h-[45vh] whitespace-pre-wrap rounded-2xl border border-border bg-card px-6 py-8 text-foreground sm:px-10`}>
                   <Highlighted text={text} words={stillUncertain} />
                 </article>
               )}
@@ -265,7 +351,18 @@ function Editor() {
                 </div>
               )}
 
-              <div className="mt-6 flex flex-wrap gap-3">
+              <div className="mt-6">
+                <p className="mb-2 text-sm font-medium text-deep">Page style <span className="font-normal text-muted-foreground">(Preview and PDF)</span></p>
+                <div className="flex rounded-2xl bg-soft p-1" role="radiogroup" aria-label="Page style">
+                  {(Object.keys(PDF_STYLES) as PageStyle[]).map((k) => (
+                    <button key={k} role="radio" aria-checked={style === k} onClick={() => { setStyle(k); setTab("preview"); }}
+                      className={`page-${k} flex-1 rounded-xl py-2 text-base capitalize transition ${style === k ? "bg-card text-primary shadow-soft" : "text-deep/70"}`}>
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
                 <button onClick={downloadPdf} disabled={!text.trim()} className="rounded-2xl bg-primary px-5 py-3 font-semibold text-primary-foreground shadow-soft hover:bg-deep disabled:opacity-50">Download PDF</button>
                 <button onClick={downloadTxt} disabled={!text.trim()} className="rounded-2xl bg-soft px-5 py-3 font-semibold text-deep disabled:opacity-50">Download .txt</button>
               </div>

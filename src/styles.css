@@ -55,6 +55,7 @@
   --color-soft: var(--soft);
   --color-page: var(--page);
   --color-warn: var(--warn);
+  --color-success: var(--success);
   --color-warn-foreground: var(--warn-foreground);
   --font-sans: "Atkinson Hyperlegible", system-ui, sans-serif;
   --font-display: "Fraunces", Georgia, serif;
@@ -95,6 +96,7 @@
   --soft: oklch(0.955 0.022 260);
   --page: oklch(0.977 0.011 264);
   --warn: oklch(0.8 0.15 80);
+  --success: oklch(0.6 0.15 155);
   --warn-foreground: oklch(0.42 0.1 60);
 }
 
@@ -143,6 +145,9 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
   }
+.page-classic { font-family: var(--font-serif); font-size: 1.125rem; line-height: 1.75; }
+  .page-modern { font-family: var(--font-sans); font-size: 1rem; line-height: 1.7; }
+  .page-academic { font-family: "Times New Roman", var(--font-serif); font-size: 1.05rem; line-height: 2.1; text-align: justify; }
   mark.uncertain {
     background: color-mix(in oklab, var(--warn) 35%, transparent);
     color: var(--warn-foreground);
