@@ -6,6 +6,7 @@ export type Recognition = {
   overallUncertain: boolean;
   confidenceNote: string;
   spelling: { original: string; suggestion: string }[];
+  crossedOut: { marker: string; guess: string | null }[];
 };
 
 type Input = { dataUrl: string; mimeType: string; fileName: string };
@@ -17,6 +18,7 @@ Return ONLY a JSON object, no prose, with keys:
 "overallUncertain": true if the page was hard to read overall (blurry, messy, partly illegible).
 "confidenceNote": one short friendly sentence about how readable the note was.
 "spelling": array of {"original","suggestion"} for likely misspellings in "text" (original must appear verbatim in "text").
+"crossedOut": for every crossed-out/struck-through word or phrase, in reading order, put the literal marker [crossed out] in "text" at its position, and add an entry {"guess": best guess of what was written underneath, or null if unreadable} to this array (same order as the markers).
 If the image contains no readable handwriting, return {"error":"no_text"}.`;
 
 export const recognizeNote = createServerFn({ method: "POST" })
@@ -62,10 +64,22 @@ export const recognizeNote = createServerFn({ method: "POST" })
       const parsed = JSON.parse(match[0]);
       if (parsed.error || typeof parsed.text !== "string" || !parsed.text.trim())
         return { ok: false, error: "We couldn't find readable handwriting in this file. Try a sharper photo with the page filling the frame." };
+      const guesses: unknown[] = Array.isArray(parsed.crossedOut) ? parsed.crossedOut : [];
+      const crossedOut: Recognition["crossedOut"] = [];
+      let n = 0;
+      const text = (parsed.text as string).replace(/\[crossed out\]/gi, () => {
+        const g = guesses[n] as { guess?: unknown } | undefined;
+        n += 1;
+        const marker = `[crossed out ${n}]`;
+        const guess = typeof g?.guess === "string" && g.guess.trim() ? g.guess.trim() : null;
+        crossedOut.push({ marker, guess });
+        return marker;
+      });
       return {
         ok: true,
         result: {
-          text: parsed.text,
+          text,
+          crossedOut,
           uncertainWords: Array.isArray(parsed.uncertainWords) ? parsed.uncertainWords.filter((w: unknown) => typeof w === "string" && w) : [],
           overallUncertain: !!parsed.overallUncertain,
           confidenceNote: String(parsed.confidenceNote ?? ""),

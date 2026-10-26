@@ -18,6 +18,7 @@ export const Route = createFileRoute("/editor")({
   component: Editor,
 });
 
+type Cross = { marker: string; guess: string | null; status: "pending" | "kept" | "removed" };
 type Sugg = { original: string; suggestion: string; status: "pending" | "accepted" | "rejected" };
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -29,6 +30,7 @@ function Editor() {
   const [rec, setRec] = useState<Recognition | null>(null);
   const [text, setText] = useState("");
   const [suggs, setSuggs] = useState<Sugg[]>([]);
+  const [crosses, setCrosses] = useState<Cross[]>([]);
   const [tab, setTab] = useState<"edit" | "preview">("edit");
   const started = useRef(false);
 
@@ -38,6 +40,7 @@ function Editor() {
       const r = await recognize({ data: u });
       if (!r.ok) { setError(r.error); setState("error"); return; }
       setRec(r.result); setText(r.result.text);
+      setCrosses(r.result.crossedOut.map((c) => ({ ...c, status: "pending" })));
       setSuggs(r.result.spelling.map((s) => ({ ...s, status: "pending" })));
       setState("done");
     } catch {
@@ -55,14 +58,28 @@ function Editor() {
   }, []);
 
   const stillUncertain = useMemo(
-    () => (rec?.uncertainWords ?? []).filter((w) => text.includes(w)),
-    [rec, text],
+    () => [
+      ...crosses.filter((c) => c.status === "pending").map((c) => c.marker),
+      ...(rec?.uncertainWords ?? []),
+    ].filter((w, i, a) => text.includes(w) && a.indexOf(w) === i),
+    [rec, text, crosses],
   );
 
   const decide = (i: number, accept: boolean) => {
     const s = suggs[i]; if (!s) return;
     if (accept) setText((t) => t.replace(new RegExp(`\\b${esc(s.original)}\\b`), s.suggestion));
     setSuggs((all) => all.map((x, j) => (j === i ? { ...x, status: accept ? "accepted" : "rejected" } : x)));
+  };
+
+  const decideCross = (i: number, keep: boolean) => {
+    const c = crosses[i];
+    if (!c) return;
+    setText((t) =>
+      keep && c.guess
+        ? t.replace(c.marker, c.guess)
+        : t.replace(new RegExp(`[ \\t]?${esc(c.marker)}`), "").replace(new RegExp(esc(c.marker)), ""),
+    );
+    setCrosses((all) => all.map((x, j) => (j === i ? { ...x, status: keep ? "kept" : "removed" } : x)));
   };
 
   const baseName = (upload?.fileName ?? "note").replace(/\.[^.]+$/, "");
@@ -155,6 +172,33 @@ function Editor() {
                 <article className="min-h-[45vh] whitespace-pre-wrap rounded-2xl border border-border bg-card px-6 py-8 font-serif text-lg leading-8 text-foreground sm:px-10">
                   <Highlighted text={text} words={stillUncertain} />
                 </article>
+              )}
+
+              {crosses.length > 0 && (
+                <div className="mt-5">
+                  <h3 className="mb-1 font-display text-deep">Crossed-out words</h3>
+                  <p className="mb-2 text-sm text-muted-foreground">Accept keeps our best guess in your text; Reject removes it.</p>
+                  <ul className="space-y-2">
+                    {crosses.map((c, i) => (
+                      <li key={c.marker} className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm">
+                        <span>
+                          <mark className="uncertain">{c.marker}</mark>{" "}
+                          {c.guess ? <>→ <strong className="text-deep">{c.guess}</strong></> : <span className="text-muted-foreground">unreadable</span>}
+                        </span>
+                        <span className="ml-auto flex gap-2">
+                          {c.status === "pending" ? (
+                            <>
+                              {c.guess && <button onClick={() => decideCross(i, true)} className="rounded-xl bg-primary px-3 py-1.5 font-medium text-primary-foreground">Accept</button>}
+                              <button onClick={() => decideCross(i, false)} className="rounded-xl bg-card px-3 py-1.5 font-medium text-deep">Reject</button>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">{c.status === "kept" ? "Kept" : "Removed"}</span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
 
               {suggs.length > 0 && (
