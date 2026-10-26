@@ -141,3 +141,50 @@ Return ONLY JSON: {"summary": "3-5 sentence summary", "keyPoints": ["short key p
       return { ok: false, error: "Something went wrong while making your summary. Please try again." };
     }
   });
+
+export type QuizQuestion = { question: string; options: string[]; answerIndex: number; explanation: string };
+
+export const quizNote = createServerFn({ method: "POST" })
+  .inputValidator((input: { text: string }) => {
+    if (!input?.text?.trim()) throw new Error("No text for a quiz");
+    return { text: input.text.slice(0, 20000) };
+  })
+  .handler(async ({ data }): Promise<{ ok: true; result: QuizQuestion[] } | { ok: false; error: string }> => {
+    const apiKey = process.env['LOVABLE_API_KEY'];
+    if (!apiKey) return { ok: false, error: "The quiz helper isn't set up yet. Please try again later." };
+    const { createOpenAI } = await import("@ai-sdk/openai");
+    const { streamText } = await import("ai");
+    const provider = createOpenAI({
+      baseURL: "https://ai.gateway.lovable.dev/v1",
+      apiKey,
+      headers: { "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
+    });
+    try {
+      const result = streamText({
+        model: provider.responses("openai/gpt-6-astra"),
+        system: `You write study quizzes from a student's own notes. Every question and correct answer must come only from facts in the notes. Ignore markers like [crossed out 1] or [illegible]. Simple, friendly English.
+Return ONLY JSON: {"questions":[{"question":"...","options":["a","b","c","d"],"answerIndex":0,"explanation":"one short sentence citing the notes"}]} with 3-6 questions, exactly 4 options each, varied answer positions. If the notes have too little content, return {"error":"too_short"}.`,
+        messages: [{ role: "user", content: data.text }],
+        providerOptions: {
+          openai: { forceReasoning: true, reasoningEffort: "low", reasoningSummary: "auto", store: false, include: ["reasoning.encrypted_content"] },
+        },
+      });
+      const raw = await result.text;
+      const m = raw.match(/\{[\s\S]*\}/);
+      const parsed = m ? JSON.parse(m[0]) : null;
+      const qs: QuizQuestion[] = Array.isArray(parsed?.questions)
+        ? parsed.questions.filter(
+            (q: any) => typeof q?.question === "string" && Array.isArray(q.options) && q.options.length >= 2 &&
+              Number.isInteger(q.answerIndex) && q.answerIndex >= 0 && q.answerIndex < q.options.length,
+          ).map((q: any) => ({ question: q.question, options: q.options.map(String), answerIndex: q.answerIndex, explanation: String(q.explanation ?? "") }))
+        : [];
+      if (!qs.length) return { ok: false, error: "These notes are too short to make a quiz. Add a bit more text and try again." };
+      return { ok: true, result: qs };
+    } catch (e: any) {
+      const status = e?.statusCode ?? e?.status;
+      if (status === 429) return { ok: false, error: "The quiz helper is busy. Please wait a moment and try again." };
+      if (status === 402) return { ok: false, error: "The quiz helper has run out of credits for now. Please try again later." };
+      console.error("quiz failed", e);
+      return { ok: false, error: "Something went wrong while making your quiz. Please try again." };
+    }
+  });
