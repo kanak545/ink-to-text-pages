@@ -37,7 +37,7 @@ export const recognizeNote = createServerFn({ method: "POST" })
     });
     const media =
       data.mimeType === "application/pdf"
-        ? ({ type: "file", filename: data.fileName || "note.pdf", data: data.dataUrl.split(",")[1], mediaType: "application/pdf" } as const)
+        ? ({ type: "file", filename: data.fileName || "note.pdf", data: data.dataUrl.split(",")[1] ?? "", mediaType: "application/pdf" } as const)
         : ({ type: "image", image: new URL(data.dataUrl) } as const);
     try {
       const result = streamText({

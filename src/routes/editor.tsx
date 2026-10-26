@@ -60,7 +60,7 @@ function Editor() {
   );
 
   const decide = (i: number, accept: boolean) => {
-    const s = suggs[i];
+    const s = suggs[i]; if (!s) return;
     if (accept) setText((t) => t.replace(new RegExp(`\\b${esc(s.original)}\\b`), s.suggestion));
     setSuggs((all) => all.map((x, j) => (j === i ? { ...x, status: accept ? "accepted" : "rejected" } : x)));
   };
