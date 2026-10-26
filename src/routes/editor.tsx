@@ -75,9 +75,9 @@ function Editor() {
     const c = crosses[i];
     if (!c) return;
     setText((t) =>
-      keep && c.guess
-        ? t.replace(c.marker, c.guess)
-        : t.replace(new RegExp(`[ \\t]?${esc(c.marker)}`), "").replace(new RegExp(esc(c.marker)), ""),
+      keep
+        ? t.replace(c.marker, c.guess ?? "[crossed-out word]")
+        : t.replace(new RegExp(`${esc(c.marker)}[ \\t]?|[ \\t]?${esc(c.marker)}`), ""),
     );
     setCrosses((all) => all.map((x, j) => (j === i ? { ...x, status: keep ? "kept" : "removed" } : x)));
   };
@@ -177,18 +177,18 @@ function Editor() {
               {crosses.length > 0 && (
                 <div className="mt-5">
                   <h3 className="mb-1 font-display text-deep">Crossed-out words</h3>
-                  <p className="mb-2 text-sm text-muted-foreground">Accept keeps our best guess in your text; Reject removes it.</p>
+                  <p className="mb-2 text-sm text-muted-foreground">Accept keeps our best guess in your text; Reject removes it completely.</p>
                   <ul className="space-y-2">
                     {crosses.map((c, i) => (
                       <li key={c.marker} className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm">
                         <span>
                           <mark className="uncertain">{c.marker}</mark>{" "}
-                          {c.guess ? <>→ <strong className="text-deep">{c.guess}</strong></> : <span className="text-muted-foreground">unreadable</span>}
+                          {c.guess ? <>→ <strong className="text-deep">{c.guess}</strong></> : <span className="text-muted-foreground">unreadable (Accept keeps a note that something was crossed out)</span>}
                         </span>
                         <span className="ml-auto flex gap-2">
                           {c.status === "pending" ? (
                             <>
-                              {c.guess && <button onClick={() => decideCross(i, true)} className="rounded-xl bg-primary px-3 py-1.5 font-medium text-primary-foreground">Accept</button>}
+                              {<button onClick={() => decideCross(i, true)} className="rounded-xl bg-primary px-3 py-1.5 font-medium text-primary-foreground">Accept</button>}
                               <button onClick={() => decideCross(i, false)} className="rounded-xl bg-card px-3 py-1.5 font-medium text-deep">Reject</button>
                             </>
                           ) : (
