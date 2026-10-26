@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { getUpload, type Upload } from "@/lib/upload-store";
-import { recognizeNote, type Recognition } from "@/lib/recognize.functions";
+import { recognizeNote, summarizeNote, type Recognition, type StudyPack } from "@/lib/recognize.functions";
 
 export const Route = createFileRoute("/editor")({
   head: () => ({
@@ -31,7 +31,18 @@ function Editor() {
   const [text, setText] = useState("");
   const [suggs, setSuggs] = useState<Sugg[]>([]);
   const [crosses, setCrosses] = useState<Cross[]>([]);
-  const [tab, setTab] = useState<"edit" | "preview">("edit");
+  const [tab, setTab] = useState<"edit" | "preview" | "study">("edit");
+  const summarize = useServerFn(summarizeNote);
+  const [study, setStudy] = useState<{ state: "idle" | "loading" | "error" | "done"; error?: string; pack?: StudyPack; forText?: string }>({ state: "idle" });
+  const makeSummary = async () => {
+    setStudy({ state: "loading" });
+    try {
+      const r = await summarize({ data: { text } });
+      setStudy(r.ok ? { state: "done", pack: r.result, forText: text } : { state: "error", error: r.error });
+    } catch {
+      setStudy({ state: "error", error: "We couldn't reach the study helper. Check your connection and try again." });
+    }
+  };
   const started = useRef(false);
 
   const run = async (u: Upload) => {
@@ -142,7 +153,7 @@ function Editor() {
           {state === "done" && rec && (
             <>
               <div className="mb-4 flex rounded-2xl bg-soft p-1" role="tablist">
-                {(["edit", "preview"] as const).map((t) => (
+                {(["edit", "preview", "study"] as const).map((t) => (
                   <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
                     className={`flex-1 rounded-xl py-2 font-medium capitalize transition ${tab === t ? "bg-card text-primary shadow-soft" : "text-deep/70"}`}>
                     {t}
@@ -165,7 +176,37 @@ function Editor() {
                 </div>
               )}
 
-              {tab === "edit" ? (
+              {tab === "study" ? (
+                <div className="min-h-[45vh] rounded-2xl border border-border bg-page p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-xl text-deep">Study mode</h3>
+                      <p className="text-sm text-muted-foreground">A summary and key points made only from your notes.</p>
+                    </div>
+                    <button onClick={makeSummary} disabled={study.state === "loading" || !text.trim()}
+                      className="rounded-2xl bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-soft hover:bg-deep disabled:opacity-50">
+                      {study.state === "done" ? "Regenerate summary" : study.state === "loading" ? "Summarizing…" : "Generate summary"}
+                    </button>
+                  </div>
+                  {study.state === "loading" && <div className="mt-8 flex justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-soft border-t-primary" /></div>}
+                  {study.state === "error" && <p role="alert" className="mt-5 rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{study.error}</p>}
+                  {study.state === "done" && study.pack && (
+                    <div className="mt-5 space-y-5">
+                      {study.forText !== text && <p className="rounded-xl bg-warn/10 px-4 py-2 text-sm text-warn-foreground">Your text changed since this summary was made — regenerate to update it.</p>}
+                      <section className="rounded-2xl bg-card p-5 shadow-soft">
+                        <h4 className="mb-2 font-display text-deep">Summary</h4>
+                        <p className="font-serif text-lg leading-8">{study.pack.summary}</p>
+                      </section>
+                      {study.pack.keyPoints.length > 0 && (
+                        <section className="rounded-2xl bg-card p-5 shadow-soft">
+                          <h4 className="mb-2 font-display text-deep">Key points</h4>
+                          <ul className="list-disc space-y-1.5 pl-5">{study.pack.keyPoints.map((k, i) => <li key={i}>{k}</li>)}</ul>
+                        </section>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : tab === "edit" ? (
                 <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Recognized text"
                   className="min-h-[45vh] w-full resize-y rounded-2xl border border-border bg-page p-4 leading-relaxed text-foreground outline-none focus:border-primary" />
               ) : (
