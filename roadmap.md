@@ -7,7 +7,8 @@
 - [x] Crossed-out words flagged with Accept/Reject
 - [x] Download PDF and .txt
 - [ ] Text style presets (incl. classic look) — from uploaded brief, waiting on user to pick next
-- [ ] Study mode — waiting on user
+- [x] Study mode (summary + key points)
 - [ ] Vocabulary helper (explain word + example sentences) — waiting on user
-- [ ] Summaries and quizzes — waiting on user
+- [x] Summaries
+- [ ] Quizzes — waiting on user
 - Note: brief asks for Python/Streamlit; this app is built with the web stack Lovable supports
