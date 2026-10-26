@@ -26,7 +26,7 @@ export const recognizeNote = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data }): Promise<{ ok: true; result: Recognition } | { ok: false; error: string }> => {
-    const apiKey = process.env.LOVABLE_API_KEY;
+    const apiKey = process.env['LOVABLE_API_KEY'];
     if (!apiKey) return { ok: false, error: "The reading service isn't set up yet. Please try again later." };
     const { createOpenAI } = await import("@ai-sdk/openai");
     const { streamText } = await import("ai");
