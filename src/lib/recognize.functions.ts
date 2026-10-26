@@ -44,7 +44,7 @@ export const recognizeNote = createServerFn({ method: "POST" })
         model: provider.responses("openai/gpt-6-astra"),
         system: SYSTEM,
         messages: [
-          { role: "user", content: [{ type: "text", text: "Transcribe this handwritten note as JSON." }, media] },
+          { role: "user", content: [{ type: "text", text: "Transcribe this handwritten note as JSON." }, media as never] },
         ],
         providerOptions: {
           openai: {
