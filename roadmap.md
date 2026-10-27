@@ -1,14 +1,8 @@
-# Ink to Text roadmap
+# Roadmap
 
-- [x] Homepage + upload (PNG/JPG/PDF)
-- [x] Editor: original vs Edit/Preview
-- [x] AI handwriting recognition, unsure words flagged
-- [x] Spelling suggestions (accept/reject)
-- [x] Crossed-out words flagged with Accept/Reject
-- [x] Download PDF and .txt
-- [ ] Text style picker: classic, modern, academic (Preview + PDF)
-- [x] Study mode (summary + key points)
-- [ ] Vocabulary helper (explain word + example sentences) — waiting on user
-- [x] Summaries
-- [ ] Quizzes (multiple choice, answers, score)
-- Note: brief asks for Python/Streamlit; this app is built with the web stack Lovable supports
+- [ ] Fix PDF preview in the editor's left panel (render the PDF page properly)
+- [ ] Voice editing with a mic in the Edit tab (speak "write X instead of Y")
+- [ ] Move Study mode (summary + quiz) to its own page
+- [ ] Mic answers in the quiz (speak your answer)
+- [ ] Homepage: keep the original simple welcome + upload look
+- [ ] Remaining from brief: word helper with explanations and example sentences
