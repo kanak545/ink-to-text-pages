@@ -1,8 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { getUpload, type Upload } from "@/lib/upload-store";
-import { recognizeNote, summarizeNote, quizNote, type Recognition, type StudyPack, type QuizQuestion } from "@/lib/recognize.functions";
+import { getUpload, setNoteText, type Upload } from "@/lib/upload-store";
+import { recognizeNote, type Recognition } from "@/lib/recognize.functions";
+import { applyVoiceEdit } from "@/lib/voice.functions";
+import { startRecording, type Recorder } from "@/lib/record-wav";
 
 export const Route = createFileRoute("/editor")({
   head: () => ({
@@ -30,6 +32,8 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function Editor() {
   const recognize = useServerFn(recognizeNote);
+  const voiceEdit = useServerFn(applyVoiceEdit);
+  const nav = useNavigate();
   const [upload, setUp] = useState<Upload | null>(null);
   const [state, setState] = useState<"loading" | "error" | "done" | "none">("loading");
   const [error, setError] = useState("");
@@ -37,30 +41,10 @@ function Editor() {
   const [text, setText] = useState("");
   const [suggs, setSuggs] = useState<Sugg[]>([]);
   const [crosses, setCrosses] = useState<Cross[]>([]);
-  const [tab, setTab] = useState<"edit" | "preview" | "study">("edit");
-  const summarize = useServerFn(summarizeNote);
-  const [study, setStudy] = useState<{ state: "idle" | "loading" | "error" | "done"; error?: string; pack?: StudyPack; forText?: string }>({ state: "idle" });
-  const makeQuiz = useServerFn(quizNote);
-  const [quiz, setQuiz] = useState<{ state: "idle" | "loading" | "error" | "done"; error?: string; qs?: QuizQuestion[]; picks: (number | null)[]; checked: boolean }>({ state: "idle", picks: [], checked: false });
-  const startQuiz = async () => {
-    setQuiz({ state: "loading", picks: [], checked: false });
-    try {
-      const r = await makeQuiz({ data: { text } });
-      setQuiz(r.ok ? { state: "done", qs: r.result, picks: r.result.map(() => null), checked: false } : { state: "error", error: r.error, picks: [], checked: false });
-    } catch {
-      setQuiz({ state: "error", error: "We couldn't reach the quiz helper. Check your connection and try again.", picks: [], checked: false });
-    }
-  };
+  const [tab, setTab] = useState<"edit" | "preview">("edit");
   const [style, setStyle] = useState<PageStyle>("classic");
-  const makeSummary = async () => {
-    setStudy({ state: "loading" });
-    try {
-      const r = await summarize({ data: { text } });
-      setStudy(r.ok ? { state: "done", pack: r.result, forText: text } : { state: "error", error: r.error });
-    } catch {
-      setStudy({ state: "error", error: "We couldn't reach the study helper. Check your connection and try again." });
-    }
-  };
+  const [voice, setVoice] = useState<{ phase: "idle" | "recording" | "working"; heard?: string; error?: string }>({ phase: "idle" });
+  const recorder = useRef<Recorder | null>(null);
   const started = useRef(false);
 
   const run = async (u: Upload) => {
@@ -85,6 +69,42 @@ function Editor() {
     if (!u) { setState("none"); return; }
     setUp(u); run(u);
   }, []);
+
+  const toggleVoice = async () => {
+    if (voice.phase === "recording") {
+      setVoice({ phase: "working" });
+      try {
+        const file = await recorder.current!.stop();
+        recorder.current = null;
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/public/transcribe", { method: "POST", body: form });
+        const data = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+        if (!res.ok || !data?.text) {
+          setVoice({ phase: "idle", error: data?.error ?? "We couldn't understand that recording. Please try again." });
+          return;
+        }
+        const r = await voiceEdit({ data: { text, instruction: data.text } });
+        if (!r.ok) {
+          setVoice({ phase: "idle", heard: data.text, error: r.error });
+          return;
+        }
+        setText(r.text);
+        setVoice({ phase: "idle", heard: data.text });
+      } catch (e: any) {
+        recorder.current = null;
+        setVoice({ phase: "idle", error: e?.message ?? "That didn't work. Please try again." });
+      }
+      return;
+    }
+    if (voice.phase !== "idle") return;
+    try {
+      recorder.current = await startRecording();
+      setVoice({ phase: "recording", heard: undefined, error: undefined });
+    } catch {
+      setVoice({ phase: "idle", error: "We couldn't use your microphone. Check the browser permission and try again." });
+    }
+  };
 
   const stillUncertain = useMemo(
     () => [
@@ -155,9 +175,7 @@ function Editor() {
         <section className="rounded-3xl bg-card p-4 shadow-soft">
           <h2 className="mb-3 px-2 font-display text-lg text-deep">Original</h2>
           {upload?.mimeType === "application/pdf" ? (
-            <object data={upload.dataUrl} type="application/pdf" className="h-[70vh] w-full rounded-2xl">
-              <p className="p-4 text-sm text-muted-foreground">PDF preview isn't available on this device.</p>
-            </object>
+            <PdfPreview dataUrl={upload.dataUrl} />
           ) : upload ? (
             <img src={upload.dataUrl} alt="Your handwritten note" className="max-h-[75vh] w-full rounded-2xl bg-soft object-contain" />
           ) : null}
@@ -183,13 +201,19 @@ function Editor() {
           )}
           {state === "done" && rec && (
             <>
-              <div className="mb-4 flex rounded-2xl bg-soft p-1" role="tablist">
-                {(["edit", "preview", "study"] as const).map((t) => (
-                  <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                    className={`flex-1 rounded-xl py-2 font-medium capitalize transition ${tab === t ? "bg-card text-primary shadow-soft" : "text-deep/70"}`}>
-                    {t}
-                  </button>
-                ))}
+              <div className="mb-4 flex items-center gap-2">
+                <div className="flex flex-1 rounded-2xl bg-soft p-1" role="tablist">
+                  {(["edit", "preview"] as const).map((t) => (
+                    <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                      className={`flex-1 rounded-xl py-2 font-medium capitalize transition ${tab === t ? "bg-card text-primary shadow-soft" : "text-deep/70"}`}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => { setNoteText(text); nav({ to: "/study" }); }}
+                  className="rounded-2xl bg-deep px-4 py-2 font-medium text-primary-foreground shadow-soft transition hover:bg-primary">
+                  Study mode →
+                </button>
               </div>
 
               {(rec.overallUncertain || stillUncertain.length > 0) && (
@@ -207,94 +231,22 @@ function Editor() {
                 </div>
               )}
 
-              {tab === "study" ? (
-                <div className="min-h-[45vh] rounded-2xl border border-border bg-page p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-display text-xl text-deep">Study mode</h3>
-                      <p className="text-sm text-muted-foreground">A summary and key points made only from your notes.</p>
-                    </div>
-                    <button onClick={makeSummary} disabled={study.state === "loading" || !text.trim()}
-                      className="rounded-2xl bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-soft hover:bg-deep disabled:opacity-50">
-                      {study.state === "done" ? "Regenerate summary" : study.state === "loading" ? "Summarizing…" : "Generate summary"}
+              {tab === "edit" ? (
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-sm text-muted-foreground">Type, or use the mic and say things like “write photosynthesis instead of fotosynthesis”.</p>
+                    <button onClick={toggleVoice} disabled={voice.phase === "working"}
+                      aria-label={voice.phase === "recording" ? "Stop and apply voice edit" : "Edit by voice"}
+                      className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition disabled:opacity-50 ${voice.phase === "recording" ? "bg-destructive text-destructive-foreground" : "bg-soft text-deep hover:bg-border"}`}>
+                      <MicIcon active={voice.phase === "recording"} />
+                      {voice.phase === "recording" ? "Stop" : voice.phase === "working" ? "Applying…" : "Edit by voice"}
                     </button>
                   </div>
-                  {study.state === "loading" && <div className="mt-8 flex justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-soft border-t-primary" /></div>}
-                  {study.state === "error" && <p role="alert" className="mt-5 rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{study.error}</p>}
-                  {study.state === "done" && study.pack && (
-                    <div className="mt-5 space-y-5">
-                      {study.forText !== text && <p className="rounded-xl bg-warn/10 px-4 py-2 text-sm text-warn-foreground">Your text changed since this summary was made — regenerate to update it.</p>}
-                      <section className="rounded-2xl bg-card p-5 shadow-soft">
-                        <h4 className="mb-2 font-display text-deep">Summary</h4>
-                        <p className="font-serif text-lg leading-8">{study.pack.summary}</p>
-                      </section>
-                      {study.pack.keyPoints.length > 0 && (
-                        <section className="rounded-2xl bg-card p-5 shadow-soft">
-                          <h4 className="mb-2 font-display text-deep">Key points</h4>
-                          <ul className="list-disc space-y-1.5 pl-5">{study.pack.keyPoints.map((k, i) => <li key={i}>{k}</li>)}</ul>
-                        </section>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="mt-8 border-t border-border pt-6">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="font-display text-xl text-deep">Quiz</h3>
-                        <p className="text-sm text-muted-foreground">Multiple-choice questions from your notes.</p>
-                      </div>
-                      <button onClick={startQuiz} disabled={quiz.state === "loading" || !text.trim()}
-                        className="rounded-2xl bg-primary px-5 py-2.5 font-semibold text-primary-foreground shadow-soft hover:bg-deep disabled:opacity-50">
-                        {quiz.state === "loading" ? "Making quiz…" : quiz.state === "done" ? "New quiz" : "Make a quiz"}
-                      </button>
-                    </div>
-                    {quiz.state === "loading" && <div className="mt-6 flex justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-soft border-t-primary" /></div>}
-                    {quiz.state === "error" && <p role="alert" className="mt-5 rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{quiz.error}</p>}
-                    {quiz.state === "done" && quiz.qs && (
-                      <div className="mt-5 space-y-4">
-                        {quiz.qs.map((q, qi) => (
-                          <fieldset key={qi} className="rounded-2xl bg-card p-5 shadow-soft">
-                            <legend className="sr-only">Question {qi + 1}</legend>
-                            <p className="mb-3 font-medium text-deep">{qi + 1}. {q.question}</p>
-                            <div className="grid gap-2">
-                              {q.options.map((o, oi) => {
-                                const picked = quiz.picks[qi] === oi;
-                                const right = quiz.checked && oi === q.answerIndex;
-                                const wrong = quiz.checked && picked && oi !== q.answerIndex;
-                                return (
-                                  <label key={oi} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-2.5 text-sm transition ${right ? "border-success bg-success/10" : wrong ? "border-destructive bg-destructive/10" : picked ? "border-primary bg-soft" : "border-border hover:bg-soft"}`}>
-                                    <input type="radio" name={`q${qi}`} checked={picked} disabled={quiz.checked}
-                                      onChange={() => setQuiz((z) => ({ ...z, picks: z.picks.map((p, j) => (j === qi ? oi : p)) }))} className="accent-primary" />
-                                    <span>{o}</span>
-                                    {right && <span className="ml-auto font-medium text-success">Correct answer</span>}
-                                    {wrong && <span className="ml-auto font-medium text-destructive">Your answer</span>}
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            {quiz.checked && q.explanation && <p className="mt-3 text-sm text-muted-foreground">{q.explanation}</p>}
-                          </fieldset>
-                        ))}
-                        {quiz.checked ? (
-                          <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-soft p-5">
-                            <p className="font-display text-xl text-deep">
-                              Score: {quiz.picks.filter((p, i) => p === quiz.qs![i]!.answerIndex).length} / {quiz.qs.length}
-                            </p>
-                            <button onClick={() => setQuiz((z) => ({ ...z, picks: z.picks.map(() => null), checked: false }))} className="ml-auto rounded-xl bg-card px-4 py-2 font-medium text-deep">Try again</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setQuiz((z) => ({ ...z, checked: true }))} disabled={quiz.picks.some((p) => p === null)}
-                            className="rounded-2xl bg-primary px-5 py-3 font-semibold text-primary-foreground shadow-soft disabled:opacity-50">
-                            {quiz.picks.some((p) => p === null) ? "Answer every question to check" : "Check answers"}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {voice.heard && <p className="mb-2 text-sm text-muted-foreground">You said: “{voice.heard}”</p>}
+                  {voice.error && <p role="alert" className="mb-2 rounded-xl bg-destructive/10 px-3 py-2 text-sm text-destructive">{voice.error}</p>}
+                  <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Recognized text"
+                    className="min-h-[45vh] w-full resize-y rounded-2xl border border-border bg-page p-4 leading-relaxed text-foreground outline-none focus:border-primary" />
                 </div>
-              ) : tab === "edit" ? (
-                <textarea value={text} onChange={(e) => setText(e.target.value)} aria-label="Recognized text"
-                  className="min-h-[45vh] w-full resize-y rounded-2xl border border-border bg-page p-4 leading-relaxed text-foreground outline-none focus:border-primary" />
               ) : (
                 <article className={`page-${style} min-h-[45vh] whitespace-pre-wrap rounded-2xl border border-border bg-card px-6 py-8 text-foreground sm:px-10`}>
                   <Highlighted text={text} words={stillUncertain} />
@@ -315,7 +267,7 @@ function Editor() {
                         <span className="ml-auto flex gap-2">
                           {c.status === "pending" ? (
                             <>
-                              {<button onClick={() => decideCross(i, true)} className="rounded-xl bg-primary px-3 py-1.5 font-medium text-primary-foreground">Accept</button>}
+                              <button onClick={() => decideCross(i, true)} className="rounded-xl bg-primary px-3 py-1.5 font-medium text-primary-foreground">Accept</button>
                               <button onClick={() => decideCross(i, false)} className="rounded-xl bg-card px-3 py-1.5 font-medium text-deep">Reject</button>
                             </>
                           ) : (
@@ -371,6 +323,47 @@ function Editor() {
         </section>
       </div>
     </Shell>
+  );
+}
+
+function PdfPreview({ dataUrl }: { dataUrl: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const pdfjs = await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+        const doc = await pdfjs.getDocument({ url: dataUrl }).promise;
+        const page = await doc.getPage(1);
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) return;
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, (canvas.parentElement?.clientWidth ?? 600) / base.width);
+        const viewport = page.getViewport({ scale });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport }).promise;
+      } catch {
+        if (!cancelled) setError("We couldn't show a preview of this PDF, but you can still read its text on the right.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dataUrl]);
+
+  if (error) return <p className="rounded-2xl bg-soft p-6 text-sm text-muted-foreground">{error}</p>;
+  return <canvas ref={canvasRef} className="w-full rounded-2xl bg-soft" aria-label="First page of your PDF note" />;
+}
+
+function MicIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={active ? "animate-pulse" : undefined}>
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="17" x2="12" y2="22" />
+    </svg>
   );
 }
 
