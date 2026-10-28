@@ -100,7 +100,7 @@ function Editor() {
     if (voice.phase !== "idle") return;
     try {
       recorder.current = await startRecording();
-      setVoice({ phase: "recording", heard: undefined, error: undefined });
+      setVoice({ phase: "recording" });
     } catch {
       setVoice({ phase: "idle", error: "We couldn't use your microphone. Check the browser permission and try again." });
     }
