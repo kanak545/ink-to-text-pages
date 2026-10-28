@@ -84,7 +84,7 @@ function Study() {
     if (voice.phase !== "idle") return;
     try {
       recorder.current = await startRecording();
-      setVoice({ q: qi, phase: "recording", heard: undefined, error: undefined });
+      setVoice({ q: qi, phase: "recording" });
     } catch {
       setVoice({ q: qi, phase: "idle", error: "We couldn't use your microphone. Check the browser permission and try again." });
     }
