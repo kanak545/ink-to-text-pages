@@ -64,10 +64,13 @@ function Study() {
     if (voice.phase === "recording" && voice.q === qi) {
       setVoice({ q: qi, phase: "working" });
       try {
-        const file = await recorder.current!.stop();
+        const activeRecorder = recorder.current;
+        if (!activeRecorder) throw new Error("No recording is available. Please record again.");
+        const file = await activeRecorder.stop();
         recorder.current = null;
         const spoken = await transcribe(file);
-        const q = quiz.qs![qi]!;
+        const q = quiz.qs?.[qi];
+        if (!q) throw new Error("This question is no longer available. Please try again.");
         const r = await matchAnswer({ data: { question: q.question, options: q.options, spoken } });
         if (!r.ok) {
           setVoice({ q: qi, phase: "idle", heard: spoken, error: r.error });
@@ -190,7 +193,7 @@ function Study() {
               {quiz.checked ? (
                 <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-soft p-5">
                   <p className="font-display text-xl text-deep">
-                    Score: {quiz.picks.filter((p, i) => p === quiz.qs![i]!.answerIndex).length} / {quiz.qs.length}
+                    Score: {quiz.picks.filter((p, i) => p === quiz.qs?.[i]?.answerIndex).length} / {quiz.qs.length}
                   </p>
                   <button onClick={() => setQuiz((z) => ({ ...z, picks: z.picks.map(() => null), checked: false }))} className="ml-auto rounded-xl bg-card px-4 py-2 font-medium text-deep">Try again</button>
                 </div>

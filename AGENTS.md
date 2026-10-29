@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Keep pdfjs-dist pinned to the verified browser-compatible release; newer releases require Map methods unavailable in some supported browsers.
