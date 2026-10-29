@@ -9,4 +9,4 @@
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
 
-- Keep PDF rendering on a browser-compatible pdfjs-dist release; version 6 requires Map methods unavailable in some supported browsers.
+- Keep pdfjs-dist pinned to the verified browser-compatible release; newer releases require Map methods unavailable in some supported browsers.
