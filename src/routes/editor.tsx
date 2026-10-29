@@ -74,7 +74,9 @@ function Editor() {
     if (voice.phase === "recording") {
       setVoice({ phase: "working" });
       try {
-        const file = await recorder.current!.stop();
+        const activeRecorder = recorder.current;
+        if (!activeRecorder) throw new Error("No recording is available. Please record again.");
+        const file = await activeRecorder.stop();
         recorder.current = null;
         const form = new FormData();
         form.append("file", file);
@@ -345,7 +347,9 @@ function PdfPreview({ dataUrl }: { dataUrl: string }) {
         const viewport = page.getViewport({ scale });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport }).promise;
+        const canvasContext = canvas.getContext("2d");
+        if (!canvasContext) throw new Error("PDF canvas is unavailable");
+        await page.render({ canvas, canvasContext, viewport }).promise;
       } catch {
         if (!cancelled) setError("We couldn't show a preview of this PDF, but you can still read its text on the right.");
       }
